@@ -13,7 +13,7 @@ API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 TOTAL_BUDGET = 45.0  # detik, total untuk semua percobaan
 PER_ATTEMPT_TIMEOUT = 25.0  # detik, maksimum satu percobaan
 CONNECT_TIMEOUT = 5.0
-MAX_ATTEMPTS = 3
+ATTEMPTS_PER_MODEL = 2
 RETRY_STATUS = {500, 502, 503, 504}
 
 
@@ -48,53 +48,65 @@ Instruksi tugas:
 {description}
 """
 
+    # Model utama dulu, lalu model cadangan (GEMINI_FALLBACK_MODELS, dipisah koma).
+    fallbacks = [
+        m.strip()
+        for m in os.getenv("GEMINI_FALLBACK_MODELS", "").split(",")
+        if m.strip()
+    ]
+    models = [model_name] + [m for m in fallbacks if m != model_name]
+
     started = time.monotonic()
     response = None
     last_error = "tidak ada respons"
+    attempt = 0
+    done = False
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        remaining = TOTAL_BUDGET - (time.monotonic() - started)
-        if remaining <= 1:
-            break
-
-        timeout = httpx.Timeout(
-            min(PER_ATTEMPT_TIMEOUT, remaining),
-            connect=CONNECT_TIMEOUT,
-        )
-        _log(
-            f"Memanggil Gemini model={model_name} (percobaan {attempt}/{MAX_ATTEMPTS})"
-        )
-
-        try:
-            response = httpx.post(
-                API_URL,
-                headers={"x-goog-api-key": api_key},
-                json={"model": model_name, "input": prompt},
-                timeout=timeout,
-            )
-        except httpx.TimeoutException:
-            last_error = "Layanan AI tidak merespons tepat waktu"
-            _log(f"Timeout setelah {time.monotonic() - started:.1f} detik")
-            response = None
-        except httpx.HTTPError as e:
-            raise RuntimeError(
-                f"Gagal menghubungi layanan AI: {type(e).__name__}"
-            ) from e
-        else:
-            _log(
-                f"Gemini status={response.status_code} "
-                f"({time.monotonic() - started:.1f} detik)"
-            )
-            if response.status_code not in RETRY_STATUS:
+    for model in models:
+        for _ in range(ATTEMPTS_PER_MODEL):
+            remaining = TOTAL_BUDGET - (time.monotonic() - started)
+            if remaining <= 1:
+                done = True
                 break
-            last_error = f"Gemini mengembalikan status {response.status_code}"
 
-        # Jeda sebelum mencoba lagi, tapi jangan melewati total budget.
-        pause = 2 * attempt
-        if attempt < MAX_ATTEMPTS and (
-            TOTAL_BUDGET - (time.monotonic() - started) > pause + 1
-        ):
-            time.sleep(pause)
+            attempt += 1
+            timeout = httpx.Timeout(
+                min(PER_ATTEMPT_TIMEOUT, remaining),
+                connect=CONNECT_TIMEOUT,
+            )
+            _log(f"Memanggil Gemini model={model} (percobaan {attempt})")
+
+            try:
+                response = httpx.post(
+                    API_URL,
+                    headers={"x-goog-api-key": api_key},
+                    json={"model": model, "input": prompt},
+                    timeout=timeout,
+                )
+            except httpx.TimeoutException:
+                last_error = "Layanan AI tidak merespons tepat waktu"
+                _log(f"Timeout setelah {time.monotonic() - started:.1f} detik")
+                response = None
+            except httpx.HTTPError as e:
+                raise RuntimeError(
+                    f"Gagal menghubungi layanan AI: {type(e).__name__}"
+                ) from e
+            else:
+                _log(
+                    f"Gemini model={model} status={response.status_code} "
+                    f"({time.monotonic() - started:.1f} detik)"
+                )
+                if response.status_code not in RETRY_STATUS:
+                    done = True
+                    break
+                _log(f"Gemini body={response.text[:300]}")
+                last_error = f"Gemini mengembalikan status {response.status_code}"
+
+            pause = 2
+            if TOTAL_BUDGET - (time.monotonic() - started) > pause + 1:
+                time.sleep(pause)
+        if done:
+            break
 
     if response is None or response.status_code in RETRY_STATUS:
         raise RuntimeError(last_error)
