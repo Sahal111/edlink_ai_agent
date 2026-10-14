@@ -8,11 +8,21 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 API_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
-TIMEOUT = httpx.Timeout(45.0, connect=5.0)
+
+# Batas waktu agar endpoint tidak menggantung lebih lama dari curl/extension.
+TOTAL_BUDGET = 45.0  # detik, total untuk semua percobaan
+PER_ATTEMPT_TIMEOUT = 25.0  # detik, maksimum satu percobaan
+CONNECT_TIMEOUT = 5.0
+MAX_ATTEMPTS = 3
+RETRY_STATUS = {500, 502, 503, 504}
 
 
 class GeminiQuotaError(RuntimeError):
     """Kuota atau rate limit Gemini terlampaui (HTTP 429)."""
+
+
+def _log(message: str) -> None:
+    print(f"DEBUG: {message}", flush=True)
 
 
 def generate_draft(title: str, description: str) -> str:
@@ -37,38 +47,65 @@ Judul tugas:
 Instruksi tugas:
 {description}
 """
-    print(f"DEBUG: Memanggil Gemini model={model_name}", flush=True)
 
-    for attempt in range(1, 4):
+    started = time.monotonic()
+    response = None
+    last_error = "tidak ada respons"
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        remaining = TOTAL_BUDGET - (time.monotonic() - started)
+        if remaining <= 1:
+            break
+
+        timeout = httpx.Timeout(
+            min(PER_ATTEMPT_TIMEOUT, remaining),
+            connect=CONNECT_TIMEOUT,
+        )
+        _log(
+            f"Memanggil Gemini model={model_name} (percobaan {attempt}/{MAX_ATTEMPTS})"
+        )
+
         try:
             response = httpx.post(
                 API_URL,
                 headers={"x-goog-api-key": api_key},
                 json={"model": model_name, "input": prompt},
-                timeout=TIMEOUT,
+                timeout=timeout,
             )
-        except httpx.TimeoutException as e:
-            raise RuntimeError("Layanan AI tidak merespons tepat waktu") from e
+        except httpx.TimeoutException:
+            last_error = "Layanan AI tidak merespons tepat waktu"
+            _log(f"Timeout setelah {time.monotonic() - started:.1f} detik")
+            response = None
         except httpx.HTTPError as e:
             raise RuntimeError(
                 f"Gagal menghubungi layanan AI: {type(e).__name__}"
             ) from e
+        else:
+            _log(
+                f"Gemini status={response.status_code} "
+                f"({time.monotonic() - started:.1f} detik)"
+            )
+            if response.status_code not in RETRY_STATUS:
+                break
+            last_error = f"Gemini mengembalikan status {response.status_code}"
 
-        print(
-            f"DEBUG: Gemini status={response.status_code} (percobaan {attempt}/3)",
-            flush=True,
-        )
+        # Jeda sebelum mencoba lagi, tapi jangan melewati total budget.
+        pause = 2 * attempt
+        if attempt < MAX_ATTEMPTS and (
+            TOTAL_BUDGET - (time.monotonic() - started) > pause + 1
+        ):
+            time.sleep(pause)
 
-        if response.status_code != 503 or attempt == 3:
-            break
+    if response is None or response.status_code in RETRY_STATUS:
+        raise RuntimeError(last_error)
 
-        time.sleep(2 * attempt)  # jeda 2 detik, lalu 4 detik
     if response.status_code == 429:
         raise GeminiQuotaError("Kuota Gemini terlampaui")
 
     if response.status_code != 200:
-        print(f"DEBUG: Gemini body={response.text[:300]}", flush=True)
+        _log(f"Gemini body={response.text[:300]}")
         raise RuntimeError(f"Gemini mengembalikan status {response.status_code}")
+
     data = response.json()
 
     parts = []
@@ -81,6 +118,8 @@ Instruksi tugas:
     draft = "".join(parts).strip()
 
     if not draft:
+        # Format respons belum terverifikasi: catat bentuknya untuk diagnosis.
+        _log(f"Respons tanpa teks. Kunci tingkat atas: {list(data.keys())}")
         raise RuntimeError("Gemini tidak menghasilkan teks jawaban")
 
     return draft
