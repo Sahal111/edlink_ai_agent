@@ -150,12 +150,6 @@ def create_task_draft(task_id: int):
             status_code=502,
             detail="Gagal membuat draf AI. Periksa terminal backend.",
         ) from e
-    except Exception as e:
-        print(f"ERROR GEMINI: {type(e).__name__}: {e}", flush=True)
-        raise HTTPException(
-            status_code=502,
-            detail="Gagal membuat draf AI. Periksa terminal backend.",
-        ) from e
 
     with get_connection() as conn:
         conn.execute(
