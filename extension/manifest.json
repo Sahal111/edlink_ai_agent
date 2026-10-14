@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "EdLink Assistant (dev)",
+  "version": "0.0.2",
+  "host_permissions": ["http://127.0.0.1:8000/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Baca tugas EdLink" },
+  "content_scripts": [
+    {
+      "matches": ["https://edlink.id/panel/classes/*"],
+      "js": ["content.js"]
+    }
+  ]
+}
