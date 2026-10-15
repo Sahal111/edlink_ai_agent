@@ -5,7 +5,8 @@ def get_task(task_id: int) -> dict | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, title, description, due_text, url, status, draft
+            SELECT id, title, description, due_text, url, status, draft,
+                   attachment_text, attachment_info
             FROM tasks
             WHERE id = ?
             """,
