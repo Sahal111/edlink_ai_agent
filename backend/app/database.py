@@ -12,6 +12,12 @@ def get_connection():
     return conn
 
 
+def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init_db():
     with get_connection() as conn:
         conn.execute("""
@@ -33,3 +39,6 @@ def init_db():
                 value TEXT NOT NULL
             )
         """)
+        # Migrasi untuk database lama yang dibuat sebelum kolom ini ada.
+        _ensure_column(conn, "tasks", "attachment_text", "TEXT DEFAULT ''")
+        _ensure_column(conn, "tasks", "attachment_info", "TEXT DEFAULT ''")

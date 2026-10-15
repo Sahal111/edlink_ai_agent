@@ -26,8 +26,8 @@ def _draft_buttons(task_id: int):
     ]
 
 
-def notify_new_task(task_id: int) -> None:
-    """Dipanggil setelah tugas baru tersimpan."""
+def notify_new_task(task_id: int, heading: str = "Tugas baru terdeteksi") -> None:
+    """Dipanggil setelah tugas baru tersimpan (atau lampirannya baru terbaca)."""
     if not telegram_service.can_notify():
         _log("Telegram belum dikonfigurasi lengkap, notifikasi dilewati")
         return
@@ -36,23 +36,37 @@ def notify_new_task(task_id: int) -> None:
     if task is None:
         return
 
-    description = task["description"].strip()
+    description = (task["description"] or "").strip()
+    has_attachment_text = bool((task["attachment_text"] or "").strip())
+    info = (task["attachment_info"] or "").strip()
+
     text = (
-        "Tugas baru terdeteksi\n\n"
+        f"{heading}\n\n"
         f"{task['title']}\n"
         f"Batas: {task['due_text'] or 'tidak ada'}\n"
         f"{task['url']}"
     )
+    if info:
+        text += f"\nLampiran: {info}"
 
-    if description:
-        preview = description if len(description) <= 400 else description[:400] + "..."
-        telegram_service.send_message(f"{text}\n\nInstruksi:\n{preview}")
+    if description or has_attachment_text:
+        if description:
+            preview = (
+                description if len(description) <= 400 else description[:400] + "..."
+            )
+            text += f"\n\nInstruksi:\n{preview}"
+        telegram_service.send_message(text)
         start_draft(task_id)
     else:
+        if info:
+            note = "Deskripsi kosong dan lampiran belum bisa dibaca (lihat keterangan lampiran di atas)."
+        else:
+            note = (
+                "Deskripsi kosong dan tidak ada lampiran yang terbaca. "
+                "Instruksi tugas mungkin ada di tempat lain."
+            )
         telegram_service.send_message(
-            f"{text}\n\n"
-            "Deskripsi kosong. Instruksi tugas mungkin ada di lampiran, "
-            "dan AI belum bisa membaca lampiran.",
+            f"{text}\n\n{note}",
             buttons=[[("Buat draf tetap", f"draft:{task_id}")]],
         )
 
@@ -81,6 +95,7 @@ def start_draft(task_id: int, revision_note: str = "") -> None:
                 description=task["description"],
                 revision_note=revision_note,
                 previous_draft=task["draft"] if revision_note else "",
+                attachment_text=task["attachment_text"] or "",
             )
         except GeminiQuotaError:
             telegram_service.send_message(
