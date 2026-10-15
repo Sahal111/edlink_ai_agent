@@ -25,7 +25,12 @@ def _log(message: str) -> None:
     print(f"DEBUG: {message}", flush=True)
 
 
-def generate_draft(title: str, description: str) -> str:
+def generate_draft(
+    title: str,
+    description: str,
+    revision_note: str = "",
+    previous_draft: str = "",
+) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     model_name = os.getenv("GEMINI_MODEL")
 
@@ -46,6 +51,17 @@ Judul tugas:
 
 Instruksi tugas:
 {description}
+"""
+
+    if revision_note and previous_draft:
+        prompt += f"""
+Draf sebelumnya:
+{previous_draft}
+
+Revisi yang diminta mahasiswa:
+{revision_note}
+
+Perbaiki draf sebelumnya sesuai revisi tersebut dan tulis versi lengkap yang baru.
 """
 
     # Model utama dulu, lalu model cadangan (GEMINI_FALLBACK_MODELS, dipisah koma).

@@ -5,9 +5,24 @@ function badge(tabId, text, color) {
   chrome.action.setBadgeBackgroundColor({ tabId, color });
 }
 
+async function extractTask(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_TASK" });
+  } catch (e) {
+    // Content script belum ada (tab dibuka sebelum extension dimuat/di-reload):
+    // pasang sendiri lalu coba lagi.
+    console.log("Content script belum ada, memasang otomatis:", e.message);
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+    return await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_TASK" });
+  }
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   try {
-    const res = await chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_TASK" });
+    const res = await extractTask(tab.id);
     const task = res?.task;
     if (!task) {
       console.log("Tugas tidak ditemukan di halaman ini");
