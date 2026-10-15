@@ -44,9 +44,14 @@ function waitForTask(timeoutMs = 10000) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === "EXTRACT_TASK") {
-    waitForTask().then((task) => sendResponse({ task }));
-    return true; // respons asinkron
-  }
-});
+// Cegah listener ganda kalau script ini dipasang lagi oleh background.js.
+if (!globalThis.__edlinkAssistantLoaded) {
+  globalThis.__edlinkAssistantLoaded = true;
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === "EXTRACT_TASK") {
+      waitForTask().then((task) => sendResponse({ task }));
+      return true; // respons asinkron
+    }
+  });
+}

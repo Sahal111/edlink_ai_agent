@@ -1,9 +1,10 @@
 import hashlib
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 
+from app import approval_service, telegram_service
 from app.database import get_connection, init_db
 from app.ai_service import generate_draft, GeminiQuotaError
 
@@ -23,6 +24,15 @@ class TaskInput(BaseModel):
 @app.on_event("startup")
 def startup():
     init_db()
+    telegram_service.start_polling(
+        approval_service.handle_message,
+        approval_service.handle_callback,
+    )
+
+
+@app.on_event("shutdown")
+def shutdown():
+    telegram_service.stop_polling()
 
 
 def clean_url(value: str) -> str:
@@ -49,7 +59,7 @@ def health_check():
 
 
 @app.post("/tasks")
-def create_task(task: TaskInput):
+def create_task(task: TaskInput, background_tasks: BackgroundTasks):
     title = task.title.strip()
 
     if not title:
@@ -89,6 +99,9 @@ def create_task(task: TaskInput):
         )
 
         task_id = cursor.lastrowid
+
+    # Notifikasi + pembuatan draf berjalan di belakang agar extension tidak menunggu.
+    background_tasks.add_task(approval_service.notify_new_task, task_id)
 
     return {
         "created": True,
