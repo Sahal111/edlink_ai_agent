@@ -1,5 +1,6 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-httpx
-pypdf
+# Versi di bawah ini adalah versi yang diuji (Python 3.13). Python minimum: 3.10.
+fastapi==0.143.2
+uvicorn[standard]==0.54.0
+python-dotenv==1.2.4
+httpx==0.28.1
+pypdf==6.20.1

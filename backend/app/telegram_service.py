@@ -18,8 +18,11 @@ _stop = threading.Event()
 _thread: threading.Thread | None = None
 
 
+logger = logging.getLogger("edlink.telegram")
+
+
 def _log(message: str) -> None:
-    print(f"DEBUG: {message}", flush=True)
+    logger.info("%s", message)
 
 
 def _token() -> str:
@@ -121,7 +124,7 @@ def _run_safely(handler, *args) -> None:
     try:
         handler(*args)
     except Exception as e:
-        print(f"ERROR TELEGRAM handler: {type(e).__name__}: {e}", flush=True)
+        logger.error("Handler Telegram gagal: %s: %s", type(e).__name__, e)
 
 
 def _dispatch(update: dict, on_message, on_callback) -> None:
@@ -192,7 +195,7 @@ def _poll_loop(on_message, on_callback) -> None:
                 _dispatch(update, on_message, on_callback)
         except Exception as e:
             # Termasuk 409 saat dua proses backend polling bersamaan (mis. reload).
-            print(f"ERROR TELEGRAM polling: {type(e).__name__}: {e}", flush=True)
+            logger.error("Polling Telegram gagal: %s: %s", type(e).__name__, e)
             _stop.wait(5)
 
     _log("Telegram polling berhenti")

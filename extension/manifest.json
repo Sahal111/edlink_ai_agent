@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "EdLink Assistant (dev)",
-  "version": "0.0.3",
-  "permissions": ["scripting"],
+  "version": "0.1.0",
+  "permissions": ["scripting", "storage"],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "https://edlink.id/panel/classes/*"
   ],
   "background": { "service_worker": "background.js" },
-  "action": { "default_title": "Baca tugas EdLink" },
+  "action": { "default_title": "Baca tugas EdLink / isi draf yang disetujui" },
   "content_scripts": [
     {
       "matches": ["https://edlink.id/panel/classes/*"],

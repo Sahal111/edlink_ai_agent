@@ -1,22 +1,27 @@
 """Alur: tugas baru -> notifikasi -> draf AI -> setuju / revisi / batal.
 
-Status tugas: detected -> draft_ready -> approved (atau cancelled).
-Pengiriman ke EdLink BELUM ada: 'approved' hanya menandai bahwa user setuju.
+Status tugas: detected -> draft_ready -> approved -> filled (atau cancelled).
+
+- 'approved'  : pengguna menyetujui draf di Telegram.
+- 'filled'    : extension sudah menempelkan draf ke Teks Editor EdLink
+                (dilaporkan lewat POST /tasks/{id}/filled).
+Backend TIDAK pernah menekan Simpan/Kumpulkan di EdLink; itu selalu dilakukan
+sendiri oleh pengguna di halaman EdLink.
 """
 
+import logging
 import threading
 
 from app import task_service, telegram_service
 from app.ai_service import GeminiQuotaError, generate_draft
+from app.task_service import APPROVED, CANCELLED, DRAFT_READY, FILLED
+
+logger = logging.getLogger("edlink.approval")
 
 AWAITING_REVISION = "awaiting_revision"
 
 _drafting: set[int] = set()
 _lock = threading.Lock()
-
-
-def _log(message: str) -> None:
-    print(f"DEBUG: {message}", flush=True)
 
 
 def _draft_buttons(task_id: int):
@@ -26,10 +31,14 @@ def _draft_buttons(task_id: int):
     ]
 
 
+def _is_group_task(task: dict) -> bool:
+    return "/groupteams/" in (task.get("url") or "")
+
+
 def notify_new_task(task_id: int, heading: str = "Tugas baru terdeteksi") -> None:
     """Dipanggil setelah tugas baru tersimpan (atau lampirannya baru terbaca)."""
     if not telegram_service.can_notify():
-        _log("Telegram belum dikonfigurasi lengkap, notifikasi dilewati")
+        logger.info("Telegram belum dikonfigurasi lengkap, notifikasi dilewati")
         return
 
     task = task_service.get_task(task_id)
@@ -46,6 +55,8 @@ def notify_new_task(task_id: int, heading: str = "Tugas baru terdeteksi") -> Non
         f"Batas: {task['due_text'] or 'tidak ada'}\n"
         f"{task['url']}"
     )
+    if _is_group_task(task):
+        text += "\nTugas kelompok: jawaban terlihat oleh anggota kelompok lain."
     if info:
         text += f"\nLampiran: {info}"
 
@@ -69,6 +80,18 @@ def notify_new_task(task_id: int, heading: str = "Tugas baru terdeteksi") -> Non
             f"{text}\n\n{note}",
             buttons=[[("Buat draf tetap", f"draft:{task_id}")]],
         )
+
+
+def notify_filled(task_id: int) -> None:
+    """Dipanggil setelah extension melaporkan draf sudah ditempel di editor EdLink."""
+    task = task_service.get_task(task_id)
+    if task is None:
+        return
+    telegram_service.send_message(
+        f"Draf untuk \"{task['title']}\" sudah ditempel ke Teks Editor di EdLink.\n\n"
+        "Periksa isinya di halaman EdLink, lalu tekan Simpan sendiri bila sudah "
+        "sesuai. Backend tidak menekan Simpan atau mengumpulkan tugas."
+    )
 
 
 def start_draft(task_id: int, revision_note: str = "") -> None:
@@ -104,14 +127,20 @@ def start_draft(task_id: int, revision_note: str = "") -> None:
             )
             return
         except Exception as e:
-            print(f"ERROR GEMINI: {type(e).__name__}: {e}", flush=True)
+            logger.error("Gemini gagal: %s: %s", type(e).__name__, e)
             telegram_service.send_message(
-                f"Gagal membuat draf: {e}",
+                f"Gagal membuat draf ({type(e).__name__}). Lihat log backend.",
                 buttons=[[("Coba lagi", f"draft:{task_id}")]],
             )
             return
 
-        task_service.save_draft(task_id, draft)
+        if not task_service.save_draft(task_id, draft):
+            # Status berubah selama menunggu Gemini (mis. sudah disetujui/dibatalkan).
+            telegram_service.send_message(
+                "Status tugas berubah saat draf dibuat, jadi draf baru tidak disimpan."
+            )
+            return
+
         telegram_service.send_message(
             f"Draf untuk: {task['title']}\n\n{draft}",
             buttons=_draft_buttons(task_id),
@@ -144,29 +173,29 @@ def handle_callback(
     status = task["status"]
 
     if action == "draft":
-        if status in ("approved", "cancelled"):
+        if status in task_service.LOCKED_STATUSES:
             telegram_service.send_message(f"Tugas ini sudah berstatus {status}.")
             return
         start_draft(task_id)
 
     elif action == "approve":
-        if status == "approved":
+        if status in (APPROVED, FILLED):
             telegram_service.send_message("Draf ini sudah disetujui sebelumnya.")
-        elif status != "draft_ready":
+        elif not task_service.transition(task_id, (DRAFT_READY,), APPROVED):
             telegram_service.send_message(
                 f"Tugas tidak sedang menunggu persetujuan (status: {status})."
             )
         else:
-            task_service.set_status(task_id, "approved")
             telegram_service.send_message(
                 "Draf disetujui.\n\n"
-                "Catatan: pengiriman otomatis ke EdLink belum aktif, jadi jawaban "
-                "belum dikirim ke mana pun. Salin draf di atas lalu kumpulkan manual "
-                "untuk sekarang."
+                "Langkah berikutnya: buka halaman tugas ini di EdLink, lalu klik "
+                "ikon extension. Draf akan ditempel ke Teks Editor; kamu yang "
+                "menekan Simpan setelah memeriksanya. Tidak ada yang dikirim "
+                "otomatis ke EdLink."
             )
 
     elif action == "revise":
-        if status != "draft_ready":
+        if status != DRAFT_READY:
             telegram_service.send_message(
                 f"Tugas tidak sedang menunggu persetujuan (status: {status})."
             )
@@ -178,12 +207,12 @@ def handle_callback(
         )
 
     elif action == "cancel":
-        if status == "approved":
+        if status in (APPROVED, FILLED):
             telegram_service.send_message(
                 "Draf ini sudah disetujui, tidak bisa dibatalkan dari sini."
             )
             return
-        task_service.set_status(task_id, "cancelled")
+        task_service.set_status(task_id, CANCELLED)
         task_service.clear_state(AWAITING_REVISION)
         telegram_service.send_message("Tugas dibatalkan. Tidak ada yang dikirim.")
 
