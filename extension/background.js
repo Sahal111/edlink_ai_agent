@@ -7,6 +7,44 @@ function badge(tabId, text, color) {
   chrome.action.setBadgeBackgroundColor({ tabId, color });
 }
 
+// Token API opsional (EDLINK_API_TOKEN di backend/.env). Simpan di extension:
+//   chrome.storage.local.set({ apiToken: "..." })
+async function apiFetch(path, options = {}) {
+  const { apiToken } = await chrome.storage.local.get("apiToken");
+  const headers = { ...(options.headers || {}) };
+  if (apiToken) headers["X-API-Token"] = apiToken;
+  return fetch(`${BACKEND}${path}`, { ...options, headers });
+}
+
+// Bila tugas sudah disetujui di Telegram, tempel drafnya ke Teks Editor EdLink.
+// Tidak menekan Simpan/Kumpulkan: pengguna memeriksa dan menyimpan sendiri.
+async function fillApprovedDraft(tab, taskId, status) {
+  const draftResp = await apiFetch(`/tasks/${taskId}/approved-draft`);
+  if (!draftResp.ok) {
+    console.log("Draf yang disetujui tidak tersedia:", draftResp.status);
+    badge(tab.id, "ERR", "#d93025");
+    return;
+  }
+  const { draft } = await draftResp.json();
+
+  const result = await chrome.tabs.sendMessage(tab.id, {
+    type: "FILL_EDITOR",
+    text: draft,
+  });
+  if (!result?.ok) {
+    console.log("Gagal mengisi editor:", result?.reason);
+    badge(tab.id, "ERR", "#d93025");
+    return;
+  }
+
+  console.log(`Draf ditempel ke editor (${result.chars} karakter). Periksa lalu tekan Simpan.`);
+  if (status !== "filled") {
+    const filledResp = await apiFetch(`/tasks/${taskId}/filled`, { method: "POST" });
+    if (!filledResp.ok) console.log("Gagal melapor status filled:", filledResp.status);
+  }
+  badge(tab.id, "FILL", "#1a73e8");
+}
+
 async function extractTask(tabId) {
   try {
     return await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_TASK" });
@@ -290,7 +328,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       }
     }
 
-    const resp = await fetch(`${BACKEND}/tasks`, {
+    const resp = await apiFetch("/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(task),
@@ -302,8 +340,12 @@ chrome.action.onClicked.addListener(async (tab) => {
       badge(tab.id, "ERR", "#d93025");
     } else if (data.created) {
       badge(tab.id, "OK", "#188038"); // tugas baru tersimpan
+    } else if (data.status === "approved" || data.status === "filled") {
+      await fillApprovedDraft(tab, data.task_id, data.status);
+    } else if (data.status === "detected" || data.status === "draft_ready") {
+      badge(tab.id, "WAIT", "#f9ab00"); // belum disetujui di Telegram
     } else {
-      badge(tab.id, "=", "#f9ab00"); // sudah pernah tersimpan
+      badge(tab.id, "=", "#f9ab00"); // sudah pernah tersimpan (mis. dibatalkan)
     }
   } catch (e) {
     console.log("Gagal:", e.message);

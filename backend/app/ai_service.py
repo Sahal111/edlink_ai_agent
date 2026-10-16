@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from pathlib import Path
@@ -21,8 +22,11 @@ class GeminiQuotaError(RuntimeError):
     """Kuota atau rate limit Gemini terlampaui (HTTP 429)."""
 
 
+logger = logging.getLogger("edlink.ai")
+
+
 def _log(message: str) -> None:
-    print(f"DEBUG: {message}", flush=True)
+    logger.info("%s", message)
 
 
 def generate_draft(

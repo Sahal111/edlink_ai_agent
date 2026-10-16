@@ -1,15 +1,30 @@
+import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[2] / "data" / "tasks.db"
+# EDLINK_DB_PATH dipakai oleh test agar tidak menyentuh data asli.
+DB_PATH = Path(
+    os.getenv("EDLINK_DB_PATH")
+    or Path(__file__).resolve().parents[2] / "data" / "tasks.db"
+)
 
 
+@contextmanager
 def get_connection():
+    """Buka koneksi SQLite; commit bila sukses, rollback bila error, selalu ditutup."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _ensure_column(conn, table: str, column: str, ddl: str) -> None:

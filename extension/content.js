@@ -242,11 +242,163 @@ async function collectAttachments() {
   return { attachments, log, clickTargets };
 }
 
+// ---------- Pengisian Teks Editor ----------
+// Hanya MENEMPELKAN draf ke editor. Tombol "Simpan" tidak pernah ditekan di
+// sini: pengguna memeriksa isinya lalu menyimpan sendiri.
+
+const FILL_STEP_TIMEOUT_MS = 6000;
+
+function visible(el) {
+  return Boolean(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+}
+
+async function waitFor(fn, timeoutMs = FILL_STEP_TIMEOUT_MS, stepMs = 150) {
+  const start = Date.now();
+  for (;;) {
+    const value = fn();
+    if (value) return value;
+    if (Date.now() - start > timeoutMs) return null;
+    await sleep(stepMs);
+  }
+}
+
+function activeModals() {
+  return [...document.querySelectorAll(".modal.is-active")].filter(visible);
+}
+
+function findAddAnswerButton() {
+  // Tombol di halaman (bukan judul modal): <a> atau <button> dengan teks persis.
+  return [...document.querySelectorAll('a, button, [role="button"], .button')].find(
+    (el) =>
+      textOf(el).toLowerCase() === "tambahkan jawaban" &&
+      !el.closest(".modal") &&
+      visible(el),
+  );
+}
+
+function findTextEditorOption() {
+  for (const modal of activeModals()) {
+    const option = [...modal.querySelectorAll(".option-container")].find(
+      (el) => textOf(el).toLowerCase() === "teks editor",
+    );
+    if (option) return option;
+  }
+  return null;
+}
+
+function findEditable() {
+  for (const modal of activeModals()) {
+    const title = textOf(modal.querySelector(".modal-card-title"));
+    if (!/^teks editor/i.test(title)) continue;
+    const surface = modal.querySelector(".text-editor-surface") || modal;
+    const editable = surface.querySelector('[contenteditable="true"]');
+    if (editable) return editable;
+  }
+  return null;
+}
+
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function editorText(el) {
+  return (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function pasteInto(editable, text) {
+  const dt = new DataTransfer();
+  dt.setData("text/plain", text);
+  dt.setData(
+    "text/html",
+    text
+      .split(/\n+/)
+      .map((line) => `<p>${escapeHtml(line)}</p>`)
+      .join(""),
+  );
+  editable.dispatchEvent(
+    new ClipboardEvent("paste", {
+      clipboardData: dt,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function typeInto(editable, text) {
+  const lines = text.split(/\n+/);
+  lines.forEach((line, i) => {
+    if (i > 0) document.execCommand("insertParagraph");
+    if (line) document.execCommand("insertText", false, line);
+  });
+}
+
+async function fillEditor(text) {
+  const draft = String(text || "").replace(/\r\n?/g, "\n").trim();
+  if (!draft) return { ok: false, reason: "draf kosong" };
+
+  let editable = findEditable();
+
+  if (!editable) {
+    let option = findTextEditorOption();
+
+    if (!option) {
+      const addButton = findAddAnswerButton();
+      if (!addButton) {
+        return {
+          ok: false,
+          reason:
+            'tombol "Tambahkan Jawaban" tidak ditemukan (mungkin jawaban sudah ada)',
+        };
+      }
+      addButton.click();
+      option = await waitFor(findTextEditorOption);
+      if (!option) return { ok: false, reason: 'pilihan "Teks Editor" tidak muncul' };
+    }
+
+    option.click();
+    editable = await waitFor(findEditable);
+    if (!editable) return { ok: false, reason: "editor teks tidak muncul" };
+  }
+
+  if (editorText(editable)) {
+    return {
+      ok: false,
+      reason: "editor sudah berisi teks; tidak ditimpa demi keamanan",
+    };
+  }
+
+  editable.focus();
+  const probe = draft.replace(/\s+/g, " ").slice(0, 30);
+
+  pasteInto(editable, draft);
+  await sleep(250);
+  if (!editorText(editable).includes(probe)) {
+    editable.focus();
+    typeInto(editable, draft);
+    await sleep(250);
+  }
+
+  if (!editorText(editable).includes(probe)) {
+    return { ok: false, reason: "teks tidak masuk ke editor" };
+  }
+  return { ok: true, chars: draft.length };
+}
+
 // Cegah listener ganda kalau script ini dipasang lagi oleh background.js.
 if (!globalThis.__edlinkAssistantLoaded) {
   globalThis.__edlinkAssistantLoaded = true;
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === "FILL_EDITOR") {
+      fillEditor(msg.text)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ ok: false, reason: e.message }));
+      return true; // respons asinkron
+    }
+
     if (msg?.type === "EXTRACT_TASK") {
       (async () => {
         const task = await waitForTask();
