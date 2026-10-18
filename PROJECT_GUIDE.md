@@ -31,7 +31,7 @@
 | # | Langkah | Status | Catatan / bukti |
 |---|---------|--------|-----------------|
 | 1 | Pengguna login ke EdLink secara normal | Implemented (di luar sistem) | Extension hanya berjalan di `https://edlink.id/panel/classes/*` dan memakai sesi browser pengguna. |
-| 2 | Deteksi tugas | Partially Implemented | Manual: klik ikon extension di halaman detail tugas. Label halaman (Batas tanggal, Deskripsi, Lampiran, Anggota) cocok dengan screenshot EdLink asli. Selector judul dan struktur lampiran **belum diuji di halaman asli**. Halaman daftar "Perlu Dikerjakan" (`edlink.id/classes`) tidak dipindai. |
+| 2 | Deteksi tugas | Partially Implemented | Manual: klik ikon extension di halaman detail tugas. **Terbukti di EdLink asli** (log console pemilik proyek, 2026-10-16): tugas `TK#1_SysAdmin1` terbaca, tombol "Unduh" tanpa tautan langsung berhasil ditangkap lewat klik (408 KB), backend membaca 1 halaman / 552 karakter. Di halaman daftar `edlink.id/classes` extension memang tidak berjalan (`Tugas tidak ditemukan di halaman ini`). Halaman daftar "Perlu Dikerjakan" (`edlink.id/classes`) tidak dipindai. |
 | 3 | Validasi & simpan | Implemented, diuji | `POST /tasks`, tabel `tasks`. |
 | 4 | Deteksi duplikasi | Implemented, diuji | `source_key` SHA-256 + `UNIQUE`; tabrakan bersamaan ditangani. |
 | 5 | Draf AI | Implemented kode; **Unverified** ke Gemini asli | Diuji dengan pengganti. |
@@ -131,7 +131,7 @@ backend/
     whatsapp_service.py      KOSONG
     edlink_service.py        KOSONG
     models.py                KOSONG
-  tests/                     44 test  [baru]
+  tests/                     52 test  [baru]
 extension/
   manifest.json              MV3
   content.js                 scraping + isi editor
@@ -191,22 +191,22 @@ Request `POST /tasks`: `title` (1–300), `description` (≤12000), `due_text` (
 
 | Fitur | Status | Bukti | Hasil verifikasi | Kekurangan |
 |-------|--------|-------|------------------|------------|
-| Backend & API | Implemented | `main.py` | pytest 44 lulus; server nyata dijalankan dengan token | — |
+| Backend & API | Implemented | `main.py` | pytest 52 lulus; server nyata dijalankan dengan token | — |
 | Penyimpanan DB | Implemented | `database.py`, `task_service.py` | Diuji; koneksi tertutup (test gagal bila bocor) | Tanpa CHECK status |
-| Pengambilan data EdLink | Partially Implemented / Unverified | `content.js` | Label cocok dengan screenshot asli; **belum dijalankan di EdLink** | Selector judul `p.font-20.font-w-600` belum terkonfirmasi; manual via klik |
+| Pengambilan data EdLink | Implemented, **terbukti di EdLink asli** untuk tugas kelompok berlampiran PDF | `content.js`, `background.js` `captureByClick` | Log console pemilik: tugas terbaca, PDF 408 KB tertangkap, 552 karakter terbaca, `POST /tasks` 200 | Baru satu jenis halaman yang dicoba (tugas kelompok); tugas individu/tanpa lampiran belum; manual via klik |
 | Deduplikasi | Implemented | `main.create_task` | Diuji termasuk tabrakan bersamaan | Judul berubah = tugas baru |
-| Draf AI | Implemented kode / Unverified | `ai_service.py` | Hanya mock dan jalur error | Format respons Gemini belum diverifikasi ke layanan asli |
+| Draf AI | Implemented, **terbukti di Gemini asli** | `ai_service.py` | Log pemilik: `status=200`, draf 2293 karakter dari isi PDF tiba di Telegram dan editor | Kualitas isi tergantung model; prompt diperketat agar tanpa kalimat pembuka/catatan (N-3) |
 | Lampiran PDF | Implemented (teks) | `attachment_service.py` | Teks, scan, rusak, non-PDF, >3 file diuji | Tanpa OCR |
 | Telegram | Implemented kode / Unverified | `telegram_service.py` | Otorisasi chat diuji (mock) | Belum dicoba ke Telegram asli |
 | Persetujuan pengguna | Implemented | `approval_service.py` | Diuji, termasuk balapan "disetujui saat draf dibuat" | `awaiting_revision` global |
-| Pengisian jawaban **[baru]** | Implemented, **Unverified di EdLink asli** | `content.js` `fillEditor` | 11 pemeriksaan lulus pada halaman tiruan (editor tipe ProseMirror, editor tanpa handler paste, editor menolak input, sudah terisi, tombol hilang, draf kosong) | Struktur modal diambil dari screenshot DevTools; jenis editor aslinya belum dipastikan |
+| Pengisian jawaban **[baru]** | Implemented, **terbukti terisi di EdLink asli**; hasil Simpan belum diuji | `content.js` `fillEditor` | Uji nyata 2026-10-18: modal terbuka sendiri, draf 2293 karakter masuk ke Teks Editor, `approved-draft` 200, `filled` 200, Telegram memberi tahu. Plus 11 pemeriksaan di halaman tiruan | Belum dipastikan bahwa Simpan menyimpan teks yang ditempel (state editor); ikon peringatan di editor belum dipahami |
 | Alur extension → backend **[baru]** | Implemented, diuji dengan `chrome` palsu | `background.js` | 10 pemeriksaan lulus (badge, token, urutan panggilan, kegagalan) | Belum diuji di Chrome sungguhan |
 | Pengumpulan tugas | **Tidak otomatis (sengaja)** | — | Test memastikan "Simpan" dan "Tambahkan File" tidak ditekan | Pengguna menekan Simpan sendiri |
 | Pembaruan status | Implemented | `task_service.transition` | Diuji | — |
 | Logging & error | Implemented | modul `logging`, `LOG_LEVEL` **[baru]** | Pesan error ke Telegram tidak membocorkan detail (test) | Tanpa rotasi file |
 | Security | Partially Implemented | token opsional, allowlist chat | Diuji | Token default mati (§10) |
-| Automated tests | Implemented **[baru]** | `backend/tests`, `extension/test` | 44 + 11 + 10 lulus | Tidak ada CI |
-| Integrasi end-to-end nyata | **Unverified** | — | Butuh EdLink, Gemini, Telegram nyata | Lihat checklist §11 |
+| Automated tests | Implemented **[baru]** | `backend/tests`, `extension/test` | 52 + 11 + 10 lulus | Tidak ada CI |
+| Integrasi end-to-end nyata | **Terbukti sampai penempelan ke editor** (2026-10-18) | — | Rantai: klik ikon → Gemini → Telegram → Setuju → klik ikon → editor terisi → `filled`. Semua langkah muncul di log backend | Langkah Simpan oleh pengguna dan tampilan jawaban setelah disimpan belum diverifikasi |
 | WhatsApp | Not Implemented | file kosong | — | — |
 
 ---
@@ -220,11 +220,11 @@ Request `POST /tasks`: `title` (1–300), `description` (≤12000), `due_text` (
 | H-1 | `/draft` menimpa `approved`/`cancelled` | **Diperbaiki**, dijaga test (409 + `save_draft` bersyarat + transisi atomik) |
 | H-2 | API tanpa autentikasi | **Dimitigasi**: token opsional `EDLINK_API_TOKEN`. Bila tidak diisi, tetap terbuka (backend memberi peringatan). Sisa risiko di bawah. |
 | M-1 | `.env.example` tidak sesuai kode | **Diperbaiki** |
-| M-2 | Format respons Gemini belum terverifikasi | **Masih terbuka** (butuh satu panggilan nyata) |
+| M-2 | Format respons Gemini belum terverifikasi | **Terbukti** (2026-10-18): model `gemini-3.1-flash-lite` mengembalikan draf yang terbaca, status 200 dalam 7,3 detik |
 | M-3 | Koneksi SQLite tidak ditutup | **Diperbaiki**, test gagal bila ada `ResourceWarning` |
 | M-4 | Satu state revisi global | **Masih terbuka** |
 | M-5 | Dedup rawan `IntegrityError` | **Diperbaiki**, dijaga test |
-| M-6 | Selector EdLink belum diverifikasi | **Sebagian**: label cocok dengan screenshot; judul dan lampiran belum |
+| M-6 | Selector EdLink belum diverifikasi | **Terbukti** pada satu tugas kelompok berlampiran PDF; jenis halaman lain belum dicoba |
 | M-7 | Tanpa test, README kosong | **Diperbaiki** |
 | L-1, L-2 | `print` dan `on_event` | **Diperbaiki** (`logging`, `lifespan`) |
 | L-3 | Dependency tidak dipin / `google-genai` hilang | **Diperbaiki** |
@@ -233,9 +233,17 @@ Request `POST /tasks`: `title` (1–300), `description` (≤12000), `due_text` (
 | L-6 | `due_text` hanya teks | **Terbuka** |
 | L-8 | Dua polling saat `--reload` | **Terbuka**, didokumentasikan |
 
+**Temuan dari uji nyata pertama (2026-10-16)**
+
+- **N-1 (diperbaiki, diuji): draf basi.** Tugas yang tidak punya deskripsi dan lampirannya baru terbaca setelah draf pertama dibuat tetap memakai draf lama (Gemini hanya menjawab "Silakan lampirkan instruksi tugas"). Kini, bila lampiran baru terbaca saat status `detected` atau `draft_ready`, draf dibuat ulang dan dikirim dengan tombol; tugas `approved`/`filled`/`cancelled` tidak disentuh.
+- **N-3 (diperbaiki lewat prompt, belum diuji ke Gemini): draf berisi kalimat pembuka dan catatan.** Draf pertama memuat "Berikut adalah draf jawaban...", "Catatan untuk Mahasiswa", dan "Draf ini perlu Anda tinjau..." yang ikut tertempel ke editor. Prompt kini meminta hanya isi jawaban. Pengguna tetap harus membaca dan membersihkan hasilnya.
+- **N-2 (diperbaiki, diuji): draf manual tanpa tombol.** `POST /tasks/{id}/draft` hanya mengembalikan draf; tidak ada tombol Setuju di Telegram, sehingga draf tidak bisa disetujui. Kini draf juga dikirim ke Telegram bertombol (hanya untuk status `draft_ready`).
+- Tombol Telegram dihapus setelah ditekan. Bila pengguna menekan Revisi lalu `/batal`, draf lama tetap `draft_ready` tanpa tombol; jalan keluarnya `POST /tasks/{id}/draft` (draf baru + tombol).
+
 **Risiko dan utang yang tersisa**
 
-- **High — pengisian editor belum terbukti di EdLink asli.** Fungsi menempelkan teks lewat peristiwa `paste` sintetis, lalu cadangan `execCommand`. Keberhasilan diperiksa dari teks DOM editor; bila editor EdLink menyimpan state sendiri yang tidak ikut berubah, tampilan bisa terisi tetapi hasil "Simpan" kosong. Mitigasi: pengguna **wajib memeriksa** isi editor sebelum Simpan. Cara memastikan: checklist §11, langkah 7–8.
+- **Medium — hasil Simpan belum diverifikasi.** Penempelan ke Teks Editor terbukti di EdLink asli (teks tampil dengan paragraf). Yang belum diketahui: apakah state internal editor ikut berubah sehingga Simpan menyimpan teks itu. Mitigasi: pengguna memeriksa editor dan jawaban setelah Simpan. Cara memastikan: checklist §11, langkah 7–8.
+- **Medium — ikon peringatan di editor.** Setelah penempelan, pojok kanan bawah editor menampilkan ikon segitiga peringatan (sebelumnya ikon robot hijau). Artinya belum diketahui (arahkan kursor untuk membaca). Bisa berupa validasi atau indikator konten dari EdLink; periksa sebelum menekan Simpan.
 - **Medium — arti tombol "Simpan".** Screenshot hanya menunjukkan "Batal" dan "Simpan" di modal Teks Editor. Belum diketahui apakah Simpan sudah menyerahkan jawaban atau hanya menyimpan draf dan masih ada langkah "Kumpulkan". Karena Simpan selalu ditekan pengguna, ini tidak berbahaya, tetapi pesan Telegram sengaja tidak menyebut "dikumpulkan".
 - **Medium — M-2 dan M-4** di atas.
 - **Medium — tugas kelompok.** Tugas dengan URL `/groupteams/` adalah jawaban kelompok yang terlihat anggota lain. Telegram memberi peringatan. Isi draf tetap tanggung jawab pengguna.
@@ -280,7 +288,7 @@ curl http://127.0.0.1:8000/health                        # ✔
 
 **Test**
 ```bash
-cd backend && pip install -r requirements-dev.txt && python -m pytest -q      # ✔ 44 lulus
+cd backend && pip install -r requirements-dev.txt && python -m pytest -q      # ✔ 52 lulus
 NODE_PATH=<lokasi node_modules berisi playwright> node extension/test/fill_editor.test.cjs   # ✔ 11 lulus (halaman tiruan)
 node extension/test/background.test.cjs                                        # ✔ 10 lulus (chrome palsu)
 ```
@@ -316,7 +324,8 @@ node extension/test/background.test.cjs                                        #
 
 - **Kode lengkap untuk seluruh alur MVP:** deteksi → simpan → dedup → draf → Telegram → setuju/revisi/batal → pengisian Teks Editor → status `filled`.
 - **Terbukti lewat pengujian lokal (tanpa layanan eksternal):** semua endpoint, dedup, lampiran, state machine, otorisasi chat, token API, penutupan koneksi, alur `background.js`, dan logika `fillEditor` pada halaman tiruan. Server nyata dijalankan dengan token dan alur `approved → filled` lewat HTTP.
-- **Belum terbukti:** scraping di EdLink asli, pengisian editor di EdLink asli, Gemini asli (termasuk format respons), Telegram asli, extension di Chrome sungguhan.
+- **Terbukti di layanan nyata (2026-10-18):** seluruh rantai sampai penempelan ke editor: extension di Chrome, scraping tugas kelompok berlampiran PDF, penangkapan PDF, backend lokal, Gemini (`gemini-3.1-flash-lite`), Telegram (draf bertombol, Setuju, notifikasi `filled`), dan pengisian Teks Editor EdLink.
+- **Belum terbukti:** hasil menekan Simpan oleh pengguna (apakah teks yang ditempel tersimpan di EdLink), arti ikon peringatan di editor, tugas individu atau tanpa lampiran, dan Revisi dengan Gemini asli.
 - **Bukan MVP-blocker tetapi terbuka:** M-4, deteksi otomatis dari "Perlu Dikerjakan", parse tenggat, OCR, CI.
 - **Apakah MVP bisa dipakai end-to-end?** Secara kode ya. Secara bukti belum: satu kali uji nyata (checklist §11) yang menentukan. Kegagalan yang paling mungkin ada di tiga tempat: format respons Gemini, selector judul/lampiran EdLink, dan cara editor EdLink menerima teks.
 - **Perubahan ini belum ada di commit `e60a9dc`;** dikirim sebagai patch. Repo di lingkungan kerja ini hanya akses baca, jadi push dilakukan oleh pemilik repo.
@@ -368,7 +377,7 @@ node extension/test/background.test.cjs                                        #
 
 ### Lampiran: bagaimana ini diverifikasi
 
-- **Backend:** `python -m pytest` → 44 lulus, dengan database sementara dan pengganti untuk Gemini/Telegram; `filterwarnings = error::ResourceWarning` menjaga koneksi tertutup.
+- **Backend:** `python -m pytest` → 52 lulus, dengan database sementara dan pengganti untuk Gemini/Telegram; `filterwarnings = error::ResourceWarning` menjaga koneksi tertutup.
 - **Extension:** `fill_editor.test.cjs` (Chromium, halaman tiruan dari struktur DOM pada screenshot) 11 lulus; `background.test.cjs` (stub `chrome`/`fetch`) 10 lulus.
 - **Server nyata:** `uvicorn` dijalankan dengan token; 401 tanpa token, pembuatan tugas, 409 pada `/draft` untuk tugas `approved`, `approved-draft`, `filled`, dan status akhir `filled`.
 - **Tidak diuji:** Chrome dengan extension terpasang, EdLink, Gemini, Telegram.

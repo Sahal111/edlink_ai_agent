@@ -110,7 +110,12 @@ def _duplicate_response(conn, source_key, attachment_text, attachment_info, back
             (attachment_text, attachment_info, existing["id"]),
         )
 
-    if attachment_updated and existing["status"] == task_service.DETECTED:
+        # Lampiran baru terbaca: kabari pengguna. Bila draf sudah ada tetapi belum
+    # disetujui (draft_ready), draf lama dibuat tanpa lampiran, jadi dibuat ulang.
+    if attachment_updated and existing["status"] in (
+        task_service.DETECTED,
+        task_service.DRAFT_READY,
+    ):
         background_tasks.add_task(
             approval_service.notify_new_task,
             existing["id"],
@@ -206,7 +211,7 @@ def list_tasks():
 
 
 @app.post("/tasks/{task_id}/draft", dependencies=[Depends(require_token)])
-def create_task_draft(task_id: int):
+def create_task_draft(task_id: int, background_tasks: BackgroundTasks):
     task = task_service.get_task(task_id)
 
     if task is None:
@@ -250,6 +255,9 @@ def create_task_draft(task_id: int):
             status_code=409,
             detail="Status tugas berubah saat draf dibuat; draf tidak disimpan",
         )
+
+    # Kirim juga ke Telegram dengan tombol, agar draf ini bisa disetujui/direvisi.
+    background_tasks.add_task(approval_service.send_draft, task_id)
 
     return {
         "task_id": task_id,

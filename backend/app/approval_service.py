@@ -94,6 +94,25 @@ def notify_filled(task_id: int) -> None:
     )
 
 
+def send_draft(task_id: int) -> None:
+    """Kirim draf tersimpan ke Telegram dengan tombol Setuju/Revisi/Batal.
+
+    Hanya untuk tugas berstatus draft_ready; status lain diabaikan agar tombol
+    persetujuan tidak muncul untuk tugas yang sudah disetujui atau dibatalkan.
+    """
+    task = task_service.get_task(task_id)
+    if (
+        task is None
+        or task["status"] != DRAFT_READY
+        or not (task["draft"] or "").strip()
+    ):
+        return
+    telegram_service.send_message(
+        f"Draf untuk: {task['title']}\n\n{task['draft']}",
+        buttons=_draft_buttons(task_id),
+    )
+
+
 def start_draft(task_id: int, revision_note: str = "") -> None:
     with _lock:
         if task_id in _drafting:
@@ -140,11 +159,7 @@ def start_draft(task_id: int, revision_note: str = "") -> None:
                 "Status tugas berubah saat draf dibuat, jadi draf baru tidak disimpan."
             )
             return
-
-        telegram_service.send_message(
-            f"Draf untuk: {task['title']}\n\n{draft}",
-            buttons=_draft_buttons(task_id),
-        )
+        send_draft(task_id)
     finally:
         with _lock:
             _drafting.discard(task_id)

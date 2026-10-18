@@ -49,10 +49,11 @@ def generate_draft(
 Kamu adalah asisten belajar berbahasa Indonesia.
 Buat draf jawaban yang akurat, jelas, dan terstruktur.
 Jangan mengarang sumber atau fakta.
-Draf harus diperiksa mahasiswa sebelum digunakan.
 Tulis dengan teks biasa tanpa format markdown (jangan pakai tanda ** atau #);
 gunakan paragraf biasa dan penomoran sederhana bila perlu.
-
+Tulis HANYA isi jawaban yang siap ditempel ke kolom jawaban.
+Jangan tulis kalimat pembuka (misalnya "Berikut adalah draf..."), jangan tulis
+catatan untuk mahasiswa, penutup, atau peringatan bahwa draf perlu diperiksa.
 Judul tugas:
 {title}
 
