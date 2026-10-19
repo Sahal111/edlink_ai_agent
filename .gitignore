@@ -6,3 +6,23 @@ __pycache__/
 .pytest_cache/
 data/data/*
 !data/.gitkeep
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Browser profiles and sessions
+data/robot_profile/
+data/proofs/
+
+# Generated files and caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
