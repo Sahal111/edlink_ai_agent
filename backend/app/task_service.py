@@ -1,3 +1,7 @@
+import hashlib
+import sqlite3
+from urllib.parse import urlsplit, urlunsplit
+
 from app.database import get_connection
 
 # Status tugas. Alur: detected -> draft_ready -> approved -> filled
@@ -8,9 +12,62 @@ DRAFT_READY = "draft_ready"
 APPROVED = "approved"
 FILLED = "filled"
 CANCELLED = "cancelled"
+# Dipakai robot browser: SUBMITTING = robot sedang bekerja di EdLink,
+# SUBMITTED = robot sudah menekan Simpan setelah pengguna menyetujui.
+SUBMITTING = "submitting"
+SUBMITTED = "submitted"
 
 # Status yang tidak boleh ditimpa oleh pembuatan draf baru.
-LOCKED_STATUSES = (APPROVED, FILLED, CANCELLED)
+LOCKED_STATUSES = (APPROVED, FILLED, CANCELLED, SUBMITTING, SUBMITTED)
+
+
+def clean_url(value: str) -> str:
+    """Buang query/fragment: URL EdLink bisa memuat token."""
+    parts = urlsplit(value)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def make_source_key(url: str, title: str) -> str:
+    return hashlib.sha256(
+        f"{clean_url(url)}|{title.strip().casefold()}".encode("utf-8")
+    ).hexdigest()
+
+
+def task_exists_for_url(url: str) -> bool:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM tasks WHERE url = ? LIMIT 1", (clean_url(url),)
+        ).fetchone()
+    return row is not None
+
+
+def create_task(
+    title: str,
+    description: str,
+    due_text: str,
+    url: str,
+    attachment_text: str = "",
+    attachment_info: str = "",
+) -> int | None:
+    """Simpan tugas baru. Mengembalikan id, atau None bila sudah ada."""
+    url = clean_url(url)
+    key = make_source_key(url, title)
+    try:
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO tasks (
+                    source_key, title, description, due_text, url,
+                    attachment_text, attachment_info
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (key, title.strip(), description.strip(), due_text.strip(), url,
+                 attachment_text, attachment_info),
+            )
+            return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        return None
 
 
 def get_task(task_id: int) -> dict | None:

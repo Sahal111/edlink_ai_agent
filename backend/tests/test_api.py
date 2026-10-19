@@ -219,3 +219,63 @@ def test_connections_are_closed(client):
         pass
     with pytest.raises(Exception):
         conn.execute("SELECT 1")
+
+
+# ---------- lampiran terbaca setelah draf dibuat ----------
+
+
+@pytest.fixture
+def notified(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main.approval_service,
+        "notify_new_task",
+        lambda task_id, heading="Tugas baru terdeteksi": calls.append((task_id, heading)),
+    )
+    return calls
+
+
+def _with_pdf(client, title="Lampiran menyusul"):
+    pdf = make_pdf("Isi lampiran")
+    return create(
+        client,
+        title=title,
+        attachments=[{"name": "x.pdf", "content_base64": b64(pdf)}],
+    ).json()
+
+
+@pytest.mark.parametrize("status", ["detected", "draft_ready"])
+def test_late_attachment_triggers_new_draft_before_approval(client, notified, status):
+    """Regresi: draf dibuat saat lampiran belum terbaca -> harus dibuat ulang."""
+    tid = create(client, title="Lampiran menyusul").json()["task_id"]
+    notified.clear()  # abaikan notifikasi tugas baru
+    set_status(tid, status)
+
+    again = _with_pdf(client)
+    assert again["attachment_updated"] is True
+    assert notified == [(tid, "Lampiran tugas berhasil dibaca")]
+
+    # Klik berikutnya: lampiran sudah tersimpan, tidak memicu ulang.
+    notified.clear()
+    assert _with_pdf(client)["attachment_updated"] is False
+    assert notified == []
+
+
+@pytest.mark.parametrize("status", ["approved", "filled", "cancelled"])
+def test_late_attachment_does_not_touch_locked_task(client, notified, status):
+    tid = create(client, title="Lampiran menyusul").json()["task_id"]
+    notified.clear()
+    set_status(tid, status)
+
+    again = _with_pdf(client)
+    assert again["attachment_updated"] is True  # teks tersimpan
+    assert notified == []  # tetapi tidak ada draf baru
+    assert task_service.get_task(tid)["status"] == status
+
+
+def test_manual_draft_is_sent_to_telegram_with_buttons(client, fake_ai, monkeypatch):
+    sent = []
+    monkeypatch.setattr(main.approval_service, "send_draft", lambda tid: sent.append(tid))
+    tid = create(client).json()["task_id"]
+    assert client.post(f"/tasks/{tid}/draft").status_code == 200
+    assert sent == [tid]

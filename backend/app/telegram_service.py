@@ -98,6 +98,22 @@ def send_message(text: str, buttons=None, chat_id: int | None = None) -> None:
         _call("sendMessage", payload)
 
 
+def send_photo(path: str, caption: str = "", chat_id: int | None = None) -> None:
+    """Kirim gambar (bukti screenshot robot) ke chat yang diizinkan."""
+    chat_id = chat_id if chat_id is not None else allowed_chat_id()
+    if chat_id is None or not is_configured():
+        return
+    with open(path, "rb") as fh:
+        response = httpx.post(
+            f"{API_BASE}/bot{_token()}/sendPhoto",
+            data={"chat_id": str(chat_id), "caption": caption[:1000]},
+            files={"photo": ("bukti.png", fh, "image/png")},
+            timeout=60.0,
+        )
+    if response.status_code != 200:
+        raise RuntimeError(f"Telegram sendPhoto gagal (status {response.status_code})")
+
+
 def answer_callback(callback_id: str, text: str = "") -> None:
     try:
         _call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})

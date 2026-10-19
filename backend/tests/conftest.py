@@ -11,6 +11,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import approval_service, main, telegram_service  # noqa: E402
 
 ENV_VARS = (
+    "EDLINK_ROBOT_MODE",
+    "EDLINK_USERNAME",
+    "EDLINK_PASSWORD",
+    "EDLINK_BASE_URL",
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
     "GEMINI_FALLBACK_MODELS",

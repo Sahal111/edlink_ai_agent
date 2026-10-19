@@ -168,3 +168,22 @@ def test_without_allowed_chat_only_start_replies(monkeypatch):
     assert sent == []
     run_dispatch({"message": {"chat": {"id": 5}, "text": "/start"}})
     assert sent and "5" in sent[0]
+
+
+def test_send_draft_only_for_draft_ready(task, telegram):
+    task_service.save_draft(task, "ISI DRAF")
+    approval_service.send_draft(task)
+    text, buttons = telegram.sent[-1]
+    assert "ISI DRAF" in text and buttons
+
+    for locked in ("approved", "filled", "cancelled", "detected"):
+        telegram.sent.clear()
+        task_service.set_status(task, locked)
+        approval_service.send_draft(task)
+        assert telegram.sent == [], locked  # tidak ada tombol untuk status ini
+
+
+def test_send_draft_skips_empty_draft(task, telegram):
+    task_service.set_status(task, "draft_ready")
+    approval_service.send_draft(task)
+    assert telegram.sent == []

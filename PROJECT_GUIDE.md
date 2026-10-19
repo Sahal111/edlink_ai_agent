@@ -381,3 +381,17 @@ node extension/test/background.test.cjs                                        #
 - **Extension:** `fill_editor.test.cjs` (Chromium, halaman tiruan dari struktur DOM pada screenshot) 11 lulus; `background.test.cjs` (stub `chrome`/`fetch`) 10 lulus.
 - **Server nyata:** `uvicorn` dijalankan dengan token; 401 tanpa token, pembuatan tugas, 409 pada `/draft` untuk tugas `approved`, `approved-draft`, `filled`, dan status akhir `filled`.
 - **Tidak diuji:** Chrome dengan extension terpasang, EdLink, Gemini, Telegram.
+
+
+---
+
+## Addendum: Robot browser (2026-10-19)
+
+Status: **Partially Implemented / Unverified di EdLink asli.** Modul baru: `backend/app/edlink_service.py`
+(Playwright: login, pindai "Perlu Dikerjakan", baca tugas, isi editor, Simpan), `backend/app/robot_service.py`
+(thread pekerja, mode off/scan/dryrun/send, jeda saat login bermasalah), perubahan pada `approval_service.py`
+(tombol Setuju memicu robot, `/cek`, `/robot`), status baru `submitting`/`submitted`.
+Diuji dengan situs EdLink tiruan (`backend/tests/mock_edlink.py`, 12 test browser; total 64 test lulus).
+Belum terbukti: login asli, selector daftar dasbor, efek tombol Simpan, ada/tidaknya tombol "Kumpulkan".
+Risiko: kredensial tersimpan di `.env` VPS, kebijakan EdLink tentang otomatisasi, UI berubah.
+Panduan pasang: README bagian "Robot browser".

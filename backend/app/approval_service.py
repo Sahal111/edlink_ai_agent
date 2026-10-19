@@ -5,8 +5,10 @@ Status tugas: detected -> draft_ready -> approved -> filled (atau cancelled).
 - 'approved'  : pengguna menyetujui draf di Telegram.
 - 'filled'    : extension sudah menempelkan draf ke Teks Editor EdLink
                 (dilaporkan lewat POST /tasks/{id}/filled).
-Backend TIDAK pernah menekan Simpan/Kumpulkan di EdLink; itu selalu dilakukan
-sendiri oleh pengguna di halaman EdLink.
+Tanpa robot (EDLINK_ROBOT_MODE=off), backend TIDAK menekan Simpan di EdLink;
+pengguna melakukannya sendiri. Dengan robot mode send, tombol Setuju di
+Telegram adalah persetujuan eksplisit agar robot mengisi dan menekan Simpan
+(status submitting -> submitted).
 """
 
 import logging
@@ -24,9 +26,23 @@ _drafting: set[int] = set()
 _lock = threading.Lock()
 
 
+def _robot():
+    # Impor ditunda: robot_service mengimpor modul ini.
+    from app import robot_service
+
+    return robot_service
+
+
 def _draft_buttons(task_id: int):
+    label = "Setuju"
+    if _robot().can_submit():
+        label = (
+            "Setuju & kirim ke EdLink"
+            if _robot().mode() == "send"
+            else "Setuju (uji coba robot)"
+        )
     return [
-        [("Setuju", f"approve:{task_id}"), ("Revisi", f"revise:{task_id}")],
+        [(label, f"approve:{task_id}"), ("Revisi", f"revise:{task_id}")],
         [("Batal", f"cancel:{task_id}")],
     ]
 
@@ -101,11 +117,7 @@ def send_draft(task_id: int) -> None:
     persetujuan tidak muncul untuk tugas yang sudah disetujui atau dibatalkan.
     """
     task = task_service.get_task(task_id)
-    if (
-        task is None
-        or task["status"] != DRAFT_READY
-        or not (task["draft"] or "").strip()
-    ):
+    if task is None or task["status"] != DRAFT_READY or not (task["draft"] or "").strip():
         return
     telegram_service.send_message(
         f"Draf untuk: {task['title']}\n\n{task['draft']}",
@@ -159,6 +171,7 @@ def start_draft(task_id: int, revision_note: str = "") -> None:
                 "Status tugas berubah saat draf dibuat, jadi draf baru tidak disimpan."
             )
             return
+
         send_draft(task_id)
     finally:
         with _lock:
@@ -200,6 +213,16 @@ def handle_callback(
             telegram_service.send_message(
                 f"Tugas tidak sedang menunggu persetujuan (status: {status})."
             )
+        elif _robot().can_submit():
+            sending = _robot().mode() == "send"
+            telegram_service.send_message(
+                "Draf disetujui. Robot sedang membuka EdLink untuk "
+                + ("mengisi jawaban dan menekan Simpan..." if sending
+                   else "uji coba (mengisi editor tanpa Simpan)...")
+            )
+            # Catat mode saat disetujui: persetujuan uji coba tidak boleh berubah jadi kirim sungguhan.
+            task_service.set_state(f"approved_mode:{task_id}", _robot().mode())
+            _robot().enqueue_submit(task_id)
         else:
             telegram_service.send_message(
                 "Draf disetujui.\n\n"
@@ -208,6 +231,24 @@ def handle_callback(
                 "menekan Simpan setelah memeriksanya. Tidak ada yang dikirim "
                 "otomatis ke EdLink."
             )
+
+    elif action == "retry":
+        if status != APPROVED or not _robot().can_submit():
+            telegram_service.send_message(
+                f"Tidak bisa dicoba ulang (status: {status})."
+            )
+            return
+        telegram_service.send_message("Robot mencoba lagi...")
+        _robot().enqueue_submit(task_id)
+
+    elif action == "final":
+        label = task_service.get_state(f"final_label:{task_id}")
+        if status != task_service.SUBMITTED or not label:
+            telegram_service.send_message("Tombol itu tidak bisa ditekan lagi.")
+            return
+        task_service.clear_state(f"final_label:{task_id}")
+        telegram_service.send_message(f'Robot menekan "{label}"...')
+        _robot().enqueue_final(task_id, label)
 
     elif action == "revise":
         if status != DRAFT_READY:
@@ -238,6 +279,22 @@ def handle_message(chat_id: int, text: str) -> None:
     if text.startswith("/batal"):
         task_service.clear_state(AWAITING_REVISION)
         telegram_service.send_message("Revisi dibatalkan.")
+        return
+
+    if text.startswith("/robot"):
+        if text.split()[1:2] == ["lanjut"]:
+            _robot().resume()
+            telegram_service.send_message("Robot dilanjutkan.")
+        else:
+            telegram_service.send_message(_robot().status_text())
+        return
+
+    if text.startswith("/cek"):
+        if _robot().mode() == "off":
+            telegram_service.send_message("Robot mati (EDLINK_ROBOT_MODE=off).")
+        else:
+            telegram_service.send_message("Memeriksa tugas baru di EdLink...")
+            _robot().enqueue_scan()
         return
 
     if text.startswith("/start"):

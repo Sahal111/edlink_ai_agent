@@ -1,15 +1,13 @@
-import hashlib
 import hmac
 import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, HttpUrl
 
-from app import approval_service, task_service, telegram_service
+from app import approval_service, robot_service, task_service, telegram_service
 from app.ai_service import GeminiQuotaError, generate_draft
 from app.attachment_service import process_attachments
 from app.database import get_connection, init_db
@@ -33,9 +31,11 @@ async def lifespan(_: FastAPI):
         approval_service.handle_message,
         approval_service.handle_callback,
     )
+    robot_service.start()
     try:
         yield
     finally:
+        robot_service.stop()
         telegram_service.stop_polling()
 
 
@@ -70,18 +70,8 @@ class TaskInput(BaseModel):
 
 
 def clean_url(value: str) -> str:
-    parts = urlsplit(value)
-
     # Jangan menyimpan query atau fragment URL yang mungkin sensitif.
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            parts.path,
-            "",
-            "",
-        )
-    )
+    return task_service.clean_url(value)
 
 
 @app.get("/health")
@@ -110,7 +100,7 @@ def _duplicate_response(conn, source_key, attachment_text, attachment_info, back
             (attachment_text, attachment_info, existing["id"]),
         )
 
-        # Lampiran baru terbaca: kabari pengguna. Bila draf sudah ada tetapi belum
+    # Lampiran baru terbaca: kabari pengguna. Bila draf sudah ada tetapi belum
     # disetujui (draft_ready), draf lama dibuat tanpa lampiran, jadi dibuat ulang.
     if attachment_updated and existing["status"] in (
         task_service.DETECTED,
@@ -141,7 +131,7 @@ def create_task(task: TaskInput, background_tasks: BackgroundTasks):
 
     url = clean_url(str(task.url))
 
-    source_key = hashlib.sha256(f"{url}|{title.casefold()}".encode("utf-8")).hexdigest()
+    source_key = task_service.make_source_key(url, title)
 
     # Hanya teks hasil ekstraksi yang disimpan; file PDF-nya tidak disimpan.
     attachment_text, attachment_info = process_attachments(task.attachments)
